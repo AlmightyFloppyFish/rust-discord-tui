@@ -1,0 +1,9 @@
+[package]
+name = "discord-tui"
+version = "0.1.0"
+authors = ["Simon <simon.larsson@protonmail.com>"]
+edition = "2018"
+
+[dependencies]
+termion = "1.5.2"
+tui = "0.5.1"
