@@ -1,3 +1,5 @@
+use interface::input::{Mode, ModeSwitcher};
+use interface::split::ChatPane;
 use std::collections::HashMap;
 use std::io;
 use std::sync::{Arc, Mutex, RwLock};
@@ -5,20 +7,24 @@ use std::thread;
 use std::time::Duration;
 use termion::event::{Event, Key};
 use termion::input::TermRead;
-use termion::raw::IntoRawMode;
-use tui::backend::TermionBackend;
 
 mod discord;
 mod interface;
 
-use discord::message::{Embed, Message};
 use interface::Tui;
 
 struct Session {
-    history: RwLock<Vec<Message>>,
+    // history: RwLock<Vec<Message>>,
     settings: RwLock<HashMap<String, String>>,
     tui: Mutex<Tui>,
     discord: RwLock<i32>,
+
+    // This contains all panes
+    chat_panes: Vec<RwLock<ChatPane>>,
+    active_pane: RwLock<u8>,
+
+    // I can just read from Insert(T).last() to see if it should switch
+    mode: ModeSwitcher,
 }
 
 impl Session {
@@ -26,8 +32,10 @@ impl Session {
         Ok(Session {
             tui: Mutex::new(interface::Tui::new()),
             settings: RwLock::new(HashMap::new()),
-            history: RwLock::new(Vec::new()),
+            chat_panes: vec![RwLock::new(ChatPane::new("TEST"))],
+            active_pane: RwLock::new(0),
             discord: RwLock::new(0),
+            mode: ModeSwitcher::new(""),
         })
     }
 
@@ -35,29 +43,14 @@ impl Session {
         Session {
             tui: Mutex::new(interface::Tui::new()),
             settings: RwLock::new(HashMap::new()),
-            history: RwLock::new(vec![
-                Message::new(
-                    "Bertill",
-                    "Here's a link!",
-                    Embed::Link(String::from("https://www.some-domain.com/")),
-                ),
-                Message::new(
-                    "Bertill",
-                    "faef egkajhg lakgh klv ka glr glvagnr an eafg a",
-                    Embed::Nothing,
-                ),
-                Message::new("greg", "fjkfda gfarg?", Embed::Nothing),
-                Message::new(
-                    "greg",
-                    "Here's a video",
-                    Embed::Video(String::from("https://youtube.com/4832348")),
-                ),
-                Message::new(
-                    "Some User",
-                    "Here's an image",
-                    Embed::Image(String::from("https://www.imgur.com/awefa")),
-                ),
-            ]),
+            mode: ModeSwitcher::new(""),
+            chat_panes: vec![
+                RwLock::new(ChatPane::new_dummy("TEST")),
+                RwLock::new(ChatPane::new_dummy("TEST2")),
+                RwLock::new(ChatPane::new_dummy("TEST3")),
+                RwLock::new(ChatPane::new_dummy("TEST4")),
+            ],
+            active_pane: RwLock::new(0),
             discord: RwLock::new(0),
         }
     }
@@ -87,12 +80,65 @@ fn main() {
     for c in stdin.events() {
         let event = c.unwrap();
         match event {
-            Event::Key(Key::Char('q')) => break,
+            // Backdoor escape, remember to remove
+            Event::Key(Key::Char('ö')) => break,
+            Event::Key(Key::Esc) => {
+                s.mode.set_mode(Mode::Insert);
+                s.mode.exec_buffer.write().unwrap().clear();
+            }
+            Event::Key(Key::Backspace) => {
+                match s.mode.is_exec() {
+                    true => s.mode.exec_buffer.write().unwrap().pop(),
+                    false => s.mode.insert_buffer.write().unwrap().pop(),
+                };
+            }
+            Event::Key(Key::Ctrl(direction)) => match direction {
+                'h' => {
+                    let mut active = s.active_pane.write().unwrap();
+                    if *active > 0 {
+                        *active -= 1;
+                    }
+                }
+                'l' => {
+                    let mut active = s.active_pane.write().unwrap();
+                    if *active < (s.chat_panes.len() - 1) as u8 {
+                        *active += 1;
+                    };
+                }
+                _ => (),
+            },
+
+            // Might seem weird but this is actually have you do Key::Enter in termion
+            Event::Key(Key::Char('\n')) => {
+                match s.mode.is_exec() {
+                    true => {
+                        // Check validity
+                        //
+                        // Do command if valid
+                        //
+                        // Else notify user of it being invalid and allow him to continue
+                        panic!("");
+                    }
+                    false => {
+                        // Send message
+                    }
+                }
+            }
+            Event::Key(Key::Char(c)) => match s.mode.is_exec() {
+                true => s.mode.exec_buffer.write().unwrap().push(c),
+                false => {
+                    if c == ':' && s.mode.is_escaping() {
+                        s.mode.escape();
+                    } else {
+                        s.mode.insert_buffer.write().unwrap().push(c)
+                    }
+                }
+            },
             _ => {}
         }
         s.update().unwrap();
     }
 
-    s.tui.lock().unwrap().clear();
     s.tui.lock().unwrap().terminal.show_cursor().unwrap();
+    s.tui.lock().unwrap().clear();
 }
